@@ -5,6 +5,7 @@ import VisualizerCanvas from '../components/VisualizerCanvas';
 import ChatbotPanel from '../components/ChatbotPanel';
 import ColorSimulator from '../components/ColorSimulator';
 import FurniturePicker from '../components/FurniturePicker';
+import CameraCaptureModal from '../components/CameraCaptureModal';
 import { FURNITURE_CATALOG } from '../data/catalog';
 
 const ROOM_BACKGROUNDS = {
@@ -31,9 +32,11 @@ export default function WorkspacePage() {
   const [furnitureItems, setFurnitureItems] = useState([]);
   const [bgImage, setBgImage]             = useState(getRoomBg(roomType));
   const [pickerCategory, setPickerCategory] = useState(null); // currently open picker
+  const [isCameraOpen, setIsCameraOpen]     = useState(false);
 
   const bgFileRef        = useRef(null);
   const furnitureFileRef = useRef(null);
+  const furnitureCameraRef = useRef(null);
 
   // Place chosen variant on canvas
   const handleVariantSelect = (categoryWithVariant) => {
@@ -89,6 +92,19 @@ export default function WorkspacePage() {
     e.target.value = '';
   };
 
+  const handleCameraCapture = (dataUrl) => {
+    setFurnitureItems(prev => [...prev, {
+      id: Date.now(),
+      type: 'Captured Asset',
+      icon: '📸',
+      photoUrl: dataUrl,
+      variantName: 'Camera Photo',
+      x: 100 + Math.random() * 100,
+      y: 100 + Math.random() * 80,
+      scale: 1,
+    }]);
+  };
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: 'var(--bg-color)' }}>
 
@@ -98,6 +114,14 @@ export default function WorkspacePage() {
           category={pickerCategory}
           onSelect={handleVariantSelect}
           onClose={() => setPickerCategory(null)}
+        />
+      )}
+
+      {/* Camera Capture Modal */}
+      {isCameraOpen && (
+        <CameraCaptureModal
+          onCapture={handleCameraCapture}
+          onClose={() => setIsCameraOpen(false)}
         />
       )}
 
@@ -154,19 +178,36 @@ export default function WorkspacePage() {
             <p style={{ fontSize: '0.72rem', color: 'var(--color-taupe)', marginBottom: '0.85rem', lineHeight: 1.4 }}>
               Click any item to choose a style, then place it on the canvas.
             </p>
-            <button
-              onClick={() => furnitureFileRef.current?.click()}
-              style={{
-                width: '100%', marginBottom: '1rem', padding: '0.65rem',
-                backgroundColor: 'var(--color-charcoal)', color: '#fff',
-                border: 'none', borderRadius: '6px', fontSize: '0.78rem',
-                fontFamily: 'var(--font-body)', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-              }}
-            >
-              <ImageIcon size={14} /> Upload Custom Item
-            </button>
+            <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1rem' }}>
+              <button
+                onClick={() => furnitureFileRef.current?.click()}
+                style={{
+                  flex: 1, padding: '0.65rem',
+                  backgroundColor: 'var(--color-charcoal)', color: '#fff',
+                  border: 'none', borderRadius: '6px', fontSize: '0.78rem',
+                  fontFamily: 'var(--font-body)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                }}
+                title="Upload Custom Item"
+              >
+                <ImageIcon size={14} /> Upload
+              </button>
+              <button
+                onClick={() => setIsCameraOpen(true)}
+                style={{
+                  flex: 1, padding: '0.65rem',
+                  backgroundColor: 'var(--color-espresso-brown)', color: '#fff',
+                  border: 'none', borderRadius: '6px', fontSize: '0.78rem',
+                  fontFamily: 'var(--font-body)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                }}
+                title="Take Photo of Custom Item"
+              >
+                <Camera size={14} /> Camera
+              </button>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
               {FURNITURE_CATALOG.map((item, idx) => (
@@ -175,15 +216,21 @@ export default function WorkspacePage() {
                   onClick={() => setPickerCategory(item)}
                   title={`Choose ${item.type} style`}
                   style={{
-                    height: '68px', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)',
+                    height: '74px', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)',
                     borderRadius: '6px', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    justifyContent: 'center', cursor: 'pointer', padding: 0,
+                    justifyContent: 'center', cursor: 'pointer', padding: '0.25rem',
                     fontFamily: 'var(--font-body)', transition: 'all 0.18s ease',
                   }}
                   className="asset-card"
                 >
-                  <span style={{ fontSize: '1.5rem', lineHeight: 1 }}>{item.icon}</span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--color-espresso-brown)', marginTop: '0.25rem' }}>{item.type}</span>
+                  <div style={{ width: '40px', height: '40px', marginBottom: '0.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img 
+                      src={item.variants[0]?.url} 
+                      alt={item.type}
+                      style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', mixBlendMode: 'multiply' }}
+                    />
+                  </div>
+                  <span style={{ fontSize: '0.62rem', color: 'var(--color-espresso-brown)', fontWeight: 500 }}>{item.type}</span>
                 </button>
               ))}
             </div>
@@ -218,6 +265,15 @@ export default function WorkspacePage() {
             ref={furnitureFileRef}
             type="file"
             accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleCustomFurniture}
+          />
+          {/* Hidden camera input for custom furniture */}
+          <input
+            ref={furnitureCameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
             style={{ display: 'none' }}
             onChange={handleCustomFurniture}
           />

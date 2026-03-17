@@ -8,7 +8,7 @@ const API_KEY = "AIzaSyApaBE5fy6oTjYtU-vsbF69XHBpbisalXs";
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ 
   model: "gemini-1.5-flash",
-  systemInstruction: "You are a high-end luxury interior design AI assistant. Your tone should be refined, expert, and elegant. Keep answers concise (1-3 sentences) and highly practical. If the user asks you to add furniture or change a wall color, acknowledge that you have actively updated the 3D canvas for them."
+  systemInstruction: "You are an elite interior design AI for 'Luxury Spaces'. You ONLY answer questions related to interior design, furniture, color palettes, and luxury architecture. If a user asks a general question, politely redirect them back to design. Your tone is elegant, brief (1-2 sentences), and highly professional. If a user command triggers a UI action (like adding furniture or changing paint), you will receive a [Hidden Context] prompt; use this to state that you have applied the change to their canvas."
 });
 
 const QUICK_CHIPS = [
