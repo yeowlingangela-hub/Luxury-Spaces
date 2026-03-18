@@ -1,15 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, Package } from 'lucide-react';
 import { WALL_PALETTE } from '../data/catalog';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Initialize Gemini
-const API_KEY = "AIzaSyApaBE5fy6oTjYtU-vsbF69XHBpbisalXs";
-const genAI = new GoogleGenerativeAI(API_KEY);
-const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-flash",
-  systemInstruction: "You are an elite interior design AI for 'Luxury Spaces'. You ONLY answer questions related to interior design, furniture, color palettes, and luxury architecture. If a user asks a general question, politely redirect them back to design. Your tone is elegant, brief (1-2 sentences), and highly professional. If a user command triggers a UI action (like adding furniture or changing paint), you will receive a [Hidden Context] prompt; use this to state that you have applied the change to their canvas."
-});
+const N8N_WEBHOOK_URL = "https://angela16.app.n8n.cloud/webhook/ai-chatbot";
 
 const QUICK_CHIPS = [
   'Add a sofa',
@@ -69,17 +62,6 @@ export default function ChatbotPanel({ addFurniture, setWallColor, furnitureCata
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const endRef = useRef(null);
-  const [chatSession, setChatSession] = useState(null);
-
-  useEffect(() => {
-    // Start Gemini chat session
-    setChatSession(model.startChat({
-      history: [
-        { role: "user", parts: [{ text: "Hello, who are you?" }] },
-        { role: "model", parts: [{ text: "Hello! I am your AI Design Assistant." }] }
-      ]
-    }));
-  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -87,7 +69,8 @@ export default function ChatbotPanel({ addFurniture, setWallColor, furnitureCata
 
   const send = async (text) => {
     const trimmed = text.trim();
-    if (!trimmed || isTyping || !chatSession) return;
+    if (!trimmed || isTyping) return;
+    
     setInput('');
     setMessages(prev => [...prev, { role: 'user', text: trimmed }]);
     setIsTyping(true);
@@ -110,13 +93,23 @@ export default function ChatbotPanel({ addFurniture, setWallColor, furnitureCata
     }
 
     try {
-      // Send the prompt to Gemini (with hidden context if a UI action was taken)
-      const prompt = localAction 
-        ? `[Hidden Context: I just changed the ${localAction === 'color' ? 'wall color to ' + localItem : 'placed a ' + localItem + ' on the canvas'}.] ` + trimmed 
-        : trimmed;
-        
-      const result = await chatSession.sendMessage(prompt);
-      const reply = result.response.text();
+      // Call n8n webhook
+      const response = await fetch(N8N_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          action: localAction,
+          item: localItem
+        })
+      });
+
+      if (!response.ok) throw new Error('Network response was not ok');
+      
+      const data = await response.json();
+      // Assuming n8n returns an object like { output: "reply text" } or just a string
+      // Let's handle common formats.
+      const reply = data.output || data.reply || data.message || (typeof data === 'string' ? data : "I've processed your request.");
       
       setMessages(prev => [...prev, { role: 'assistant', text: reply, action: localAction }]);
     } catch (e) {
