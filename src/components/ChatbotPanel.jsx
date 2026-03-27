@@ -1,9 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Package, Mic, MessageSquare, PhoneOff } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Send, Package, Mic, MessageSquare, PhoneOff } from 'lucide-react';
 import { WALL_PALETTE } from '../data/catalog';
 import { RetellWebClient } from 'retell-client-js-sdk';
 
-const N8N_WEBHOOK_URL = "https://angela16.app.n8n.cloud/webhook/ai-chatbot";
 const retellWebClient = new RetellWebClient();
 
 const QUICK_CHIPS = [
@@ -18,32 +17,17 @@ const QUICK_CHIPS = [
 function detectColorChange(text, setWallColor) {
   const t = text.toLowerCase();
   for (const c of WALL_PALETTE) {
-    if (t.includes(c.name.toLowerCase())) {
-      setWallColor(c.hex);
-      return c;
-    }
+    if (t.includes(c.name.toLowerCase())) { setWallColor(c.hex); return c; }
   }
   const keyMap = {
-    'ivory':       '#F5F0E8',
-    'beige':       '#E8DFD0',
-    'taupe':       '#B8A898',
-    'greige':      '#9E9488',
-    'stone':       '#C8C0B0',
-    'charcoal':    '#3A3A3A',
-    'olive':       '#5C5E48',
-    'sage':        '#8A9E88',
-    'espresso':    '#4A3828',
-    'brown':       '#4A3828',
-    'dark':        '#3A3A3A',
-    'light':       '#F5F0E8',
-    'bright':      '#F5F0E8',
-    'warm':        '#E8DFD0',
+    'ivory': '#F5F0E8', 'beige': '#E8DFD0', 'taupe': '#B8A898',
+    'greige': '#9E9488', 'stone': '#C8C0B0', 'charcoal': '#3A3A3A',
+    'olive': '#5C5E48', 'sage': '#8A9E88', 'espresso': '#4A3828',
+    'brown': '#4A3828', 'dark': '#3A3A3A', 'light': '#F5F0E8',
+    'bright': '#F5F0E8', 'warm': '#E8DFD0',
   };
   for (const [kw, hex] of Object.entries(keyMap)) {
-    if (t.includes(kw)) {
-      setWallColor(hex);
-      return { name: kw, hex };
-    }
+    if (t.includes(kw)) { setWallColor(hex); return { name: kw, hex }; }
   }
   return null;
 }
@@ -57,266 +41,371 @@ function detectFurnitureAdd(text, catalog) {
 
 export default function ChatbotPanel({ addFurniture, setWallColor, furnitureCatalog = [] }) {
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState('text'); // 'text' or 'voice'
+  const [mode, setMode] = useState('text');       // 'text' | 'voice'
   const [isCalling, setIsCalling] = useState(false);
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      text: `Hello! I'm your AI Design Assistant.\n\nI can:\n• Suggest colour palettes ("Change walls to charcoal")\n• Place furniture ("Add a sofa", "Place a floor lamp")\n• Give design advice ("How to make the room feel luxurious?")\n\nHow would you like to communicate today?`,
+      text: `Hi! I'm Bella, your AI Design Assistant.\n\nI can suggest colour palettes, place furniture, or give design advice. How can I help?`,
     },
   ]);
-  const [isTyping, setIsTyping] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState([]);
   const endRef = useRef(null);
+
+  // Synchronous call-state gate — prevents double startCall regardless of React batching
+  const callStateRef = useRef('idle'); // 'idle' | 'starting' | 'active'
+
+  // Stable refs so Retell handlers always see the latest props/state
+  const addFurnitureRef     = useRef(addFurniture);
+  const setWallColorRef     = useRef(setWallColor);
+  const furnitureCatalogRef = useRef(furnitureCatalog);
+  useEffect(() => { addFurnitureRef.current     = addFurniture; },     [addFurniture]);
+  useEffect(() => { setWallColorRef.current     = setWallColor; },     [setWallColor]);
+  useEffect(() => { furnitureCatalogRef.current = furnitureCatalog; }, [furnitureCatalog]);
+
+  // ── Retell event listeners — registered ONCE, removed with the EXACT same
+  //    function reference so listeners never stack up across tab switches ──
+  useEffect(() => {
+    const onCallStarted = () => {
+      callStateRef.current = 'active';
+      setIsCalling(true);
+      setVoiceTranscript([]);
+    };
+
+    const onCallEnded = () => {
+      callStateRef.current = 'idle';
+      setIsCalling(false);
+      setMode('text');
+    };
+
+    const onUpdate = (update) => {
+      if (!update.transcript) return;
+      setVoiceTranscript(update.transcript.filter(t => t.content?.trim()));
+
+      const last = update.transcript[update.transcript.length - 1];
+      if (last?.role === 'user' && last.content) {
+        const colorMatch = detectColorChange(last.content, setWallColorRef.current);
+        if (!colorMatch) {
+          const furnitureMatch = detectFurnitureAdd(last.content, furnitureCatalogRef.current);
+          if (furnitureMatch && addFurnitureRef.current) addFurnitureRef.current(furnitureMatch);
+        }
+      }
+    };
+
+    const onError = (err) => {
+      console.error('Retell error:', err);
+      callStateRef.current = 'idle';
+      setIsCalling(false);
+      setMode('text');
+    };
+
+    retellWebClient.on('call_started', onCallStarted);
+    retellWebClient.on('call_ended',   onCallEnded);
+    retellWebClient.on('update',       onUpdate);
+    retellWebClient.on('error',        onError);
+
+    return () => {
+      // Pass the EXACT same references — this is what actually removes the listeners
+      retellWebClient.off('call_started', onCallStarted);
+      retellWebClient.off('call_ended',   onCallEnded);
+      retellWebClient.off('update',       onUpdate);
+      retellWebClient.off('error',        onError);
+      // Kill any live call when the component unmounts (e.g. user switches tabs)
+      retellWebClient.stopCall();
+      callStateRef.current = 'idle';
+    };
+  }, []); // empty — runs once per mount/unmount
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
+  }, [messages, voiceTranscript]);
 
-  // Handle Retell Events
-  useEffect(() => {
-    retellWebClient.on("call_started", () => {
-      console.log("Retell Call Started");
-      setIsCalling(true);
-    });
+  // ── Voice ────────────────────────────────────────────────────────────────
 
-    retellWebClient.on("call_ended", () => {
-      console.log("Retell Call Ended");
-      setIsCalling(false);
-      setMode('text');
-    });
-
-    retellWebClient.on("update", (update) => {
-      if (update.transcript) {
-        const lastTranscript = update.transcript[update.transcript.length - 1];
-        if (lastTranscript && lastTranscript.role === 'user' && lastTranscript.content) {
-          // Detect local actions from voice transcript
-          const text = lastTranscript.content;
-          const colorMatch = detectColorChange(text, setWallColor);
-          if (!colorMatch) {
-            const furnitureMatch = detectFurnitureAdd(text, furnitureCatalog);
-            if (furnitureMatch && addFurniture) {
-              addFurniture(furnitureMatch);
-            }
-          }
-        }
-      }
-    });
-
-    retellWebClient.on("error", (error) => {
-      console.error("Retell Error:", error);
-      setIsCalling(false);
-      setMode('text');
-    });
-
-    return () => {
-      retellWebClient.off("call_started");
-      retellWebClient.off("call_ended");
-      retellWebClient.off("update");
-      retellWebClient.off("error");
-    };
-  }, [addFurniture, setWallColor, furnitureCatalog]);
-
-  const toggleVoice = async () => {
-    if (isCalling) {
-      retellWebClient.stopCall();
-      setIsCalling(false);
-      setMode('text');
-      return;
-    }
-
+  const startVoice = async () => {
+    if (callStateRef.current !== 'idle') return;  // synchronous guard
+    callStateRef.current = 'starting';
+    setMode('voice');
     try {
-      setMode('voice');
-      const response = await fetch('/api/create-web-call', { method: 'POST' });
-      const data = await response.json();
-      
-      if (data.access_token) {
-        await retellWebClient.startCall({
-          accessToken: data.access_token,
-        });
-      } else {
-        throw new Error("Failed to get access token");
-      }
+      // Ensure no zombie connection before starting a fresh one
+      try { retellWebClient.stopCall(); } catch (_) {}
+
+      const res  = await fetch('/api/create-web-call', { method: 'POST' });
+      const data = await res.json();
+      if (!data.access_token) throw new Error('No access token');
+      await retellWebClient.startCall({ accessToken: data.access_token });
+      // callStateRef → 'active' set inside onCallStarted
     } catch (err) {
-      console.error("Failed to start voice call:", err);
+      console.error('Voice call failed:', err);
+      callStateRef.current = 'idle';
       setMode('text');
-      setMessages(prev => [...prev, { role: 'assistant', text: "I'm sorry, I couldn't start the voice chat right now. Please try using text." }]);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: "I'm sorry, I couldn't start the voice chat. Please try again.",
+      }]);
     }
   };
 
+  const stopVoice = () => {
+    callStateRef.current = 'idle';
+    retellWebClient.stopCall();
+    setIsCalling(false);
+    setMode('text');
+  };
+
+  const handleModeSwitch = (newMode) => {
+    if (newMode === 'voice') {
+      startVoice();                                   // internally guarded
+    } else {
+      if (callStateRef.current !== 'idle') stopVoice();
+      else setMode('text');
+    }
+  };
+
+  // ── Text send — blocked entirely while voice is active ───────────────────
+
   const send = async (text) => {
     const trimmed = text.trim();
-    if (!trimmed || isTyping) return;
-    
+    if (!trimmed || callStateRef.current !== 'idle') return;
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: trimmed }]);
-    setIsTyping(true);
 
     let localAction = null;
-    let localItem = null;
+    let localItem   = null;
 
-    // Detect if we need to execute a UI command locally
     const colorMatch = detectColorChange(trimmed, setWallColor);
     if (colorMatch) {
       localAction = 'color';
-      localItem = colorMatch.name;
+      localItem   = colorMatch.name;
     } else {
       const furnitureMatch = detectFurnitureAdd(trimmed, furnitureCatalog);
       if (furnitureMatch && addFurniture) {
         addFurniture(furnitureMatch);
         localAction = 'furniture';
-        localItem = furnitureMatch.type;
+        localItem   = furnitureMatch.type;
       }
     }
 
-    try {
-      // Call n8n webhook
-      const response = await fetch(N8N_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: trimmed,
-          action: localAction,
-          item: localItem
-        })
-      });
+    setMessages(prev => [...prev, { role: 'user', text: trimmed }]);
 
-      if (!response.ok) throw new Error('Network response was not ok');
-      
-      const data = await response.json();
-      const reply = data.output || data.reply || data.message || (typeof data === 'string' ? data : "I've processed your request.");
-      
-      setMessages(prev => [...prev, { role: 'assistant', text: reply, action: localAction }]);
-    } catch (e) {
-      console.error(e);
-      setMessages(prev => [...prev, { role: 'assistant', text: "I'm sorry, I'm having trouble connecting to my AI brain at the moment." }]);
+    if (localAction) {
+      const actionMsg = localAction === 'color'
+        ? `Wall colour updated to ${localItem}.`
+        : `${localItem} has been added to your room.`;
+      setMessages(prev => [...prev, { role: 'assistant', text: actionMsg, action: localAction }]);
     }
-    
-    setIsTyping(false);
   };
 
   const handleSubmit = (e) => { e.preventDefault(); send(input); };
+
+  const displayMessages = mode === 'voice'
+    ? voiceTranscript.map(t => ({ role: t.role === 'agent' ? 'assistant' : 'user', text: t.content }))
+    : messages;
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
       {/* Header */}
-      <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--color-champagne-beige)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-          <div style={{ width: '30px', height: '30px', borderRadius: '50%', backgroundColor: 'var(--color-espresso-brown)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            {mode === 'voice' ? <Mic size={14} /> : <Sparkles size={14} />}
-          </div>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-charcoal)' }}>Design Assistant</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--color-taupe)' }}>{mode === 'voice' ? 'Live Voice Connection' : 'Powered by Gemini'}</div>
+      <div style={{
+        padding: '0.9rem 1rem',
+        background: 'linear-gradient(135deg, var(--color-espresso-brown) 0%, #5c3d2e 100%)',
+        display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0,
+      }}>
+        <div style={{
+          width: '36px', height: '36px', borderRadius: '50%',
+          backgroundColor: 'rgba(255,255,255,0.18)', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '1rem', fontWeight: 700, flexShrink: 0,
+        }}>B</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#fff', lineHeight: 1.2 }}>Bella</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '2px' }}>
+            <div style={{
+              width: '7px', height: '7px', borderRadius: '50%',
+              backgroundColor: isCalling ? '#f97316' : '#4ade80',
+              animation: isCalling ? 'blink 1s infinite' : 'none',
+            }} />
+            <div style={{ fontSize: '0.67rem', color: 'rgba(255,255,255,0.78)' }}>
+              {isCalling ? 'Listening…' : 'AI Design Assistant'}
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Mode Toggle */}
-        <button 
-          onClick={toggleVoice}
-          style={{
-            background: mode === 'voice' ? 'var(--color-espresso-brown)' : 'transparent',
-            color: mode === 'voice' ? '#fff' : 'var(--color-charcoal)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '20px',
-            padding: '4px 12px',
-            fontSize: '0.7rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            cursor: 'pointer',
-            fontWeight: 500,
-            transition: 'all 0.2s'
-          }}
-        >
-          {mode === 'voice' ? <PhoneOff size={12} /> : <Mic size={12} />}
-          {mode === 'voice' ? 'End Voice' : 'Voice Chat'}
-        </button>
+      {/* Chat / Talk Mode Selector */}
+      <div style={{
+        display: 'flex', gap: '0.6rem', padding: '0.85rem',
+        borderBottom: '1px solid var(--border-color)', flexShrink: 0,
+        backgroundColor: 'var(--bg-color)',
+      }}>
+        {[
+          { key: 'text',  label: 'Chat', sub: 'Type your question', Icon: MessageSquare },
+          { key: 'voice', label: 'Talk', sub: 'Voice conversation',  Icon: Mic },
+        ].map(({ key, label, sub, Icon }) => (
+          <button
+            key={key}
+            onClick={() => handleModeSwitch(key)}
+            style={{
+              flex: 1, padding: '0.75rem 0.5rem', borderRadius: '10px', cursor: 'pointer',
+              border: mode === key ? '2px solid var(--color-espresso-brown)' : '1.5px solid var(--border-color)',
+              backgroundColor: mode === key ? 'rgba(74,56,40,0.06)' : '#fff',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.3rem',
+              transition: 'all 0.2s', fontFamily: 'var(--font-body)',
+            }}
+          >
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '50%',
+              backgroundColor: mode === key ? 'rgba(74,56,40,0.1)' : 'var(--color-champagne-beige)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon size={16} color={mode === key ? 'var(--color-espresso-brown)' : 'var(--color-taupe)'} />
+            </div>
+            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: mode === key ? 'var(--color-espresso-brown)' : 'var(--text-secondary)' }}>
+              {label}
+            </div>
+            <div style={{ fontSize: '0.63rem', color: 'var(--color-taupe)' }}>{sub}</div>
+          </button>
+        ))}
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, padding: '0.85rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem', backgroundColor: mode === 'voice' ? 'rgba(232, 223, 208, 0.2)' : 'transparent' }}>
-        {mode === 'voice' && (
+      <div style={{ flex: 1, padding: '0.85rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+
+        {/* Voice idle state */}
+        {mode === 'voice' && isCalling && voiceTranscript.length === 0 && (
           <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--color-taupe)' }}>
-            <div style={{ width: '60px', height: '60px', borderRadius: '50%', backgroundColor: 'var(--color-champagne-beige)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem', animation: 'pulse 2s infinite' }}>
-              <Mic size={24} color="var(--color-espresso-brown)" />
+            <div style={{
+              width: '56px', height: '56px', borderRadius: '50%',
+              backgroundColor: 'var(--color-champagne-beige)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 1rem', animation: 'pulse 2s infinite',
+            }}>
+              <Mic size={22} color="var(--color-espresso-brown)" />
             </div>
-            <div style={{ fontWeight: 600, color: 'var(--color-charcoal)', marginBottom: '0.5rem' }}>Voice Chat Active</div>
-            <p style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>I'm listening. Try saying "Add a sofa" or "Change the walls to charcoal".</p>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-charcoal)', marginBottom: '0.4rem' }}>
+              Listening…
+            </div>
+            <p style={{ fontSize: '0.72rem', lineHeight: 1.5 }}>
+              Try saying "Add a sofa" or "Change walls to charcoal".
+            </p>
           </div>
         )}
-        
-        {mode === 'text' && messages.map((msg, idx) => (
-          <div key={idx} style={{
-            alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-            maxWidth: '92%',
-            backgroundColor: msg.role === 'user' ? 'var(--color-charcoal)' : '#fff',
-            color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
-            padding: '0.7rem 0.9rem',
-            borderRadius: msg.role === 'user' ? '14px 14px 0 14px' : '14px 14px 14px 0',
-            fontSize: '0.82rem', lineHeight: 1.55,
-            border: msg.role === 'user' ? 'none' : '1px solid var(--border-color)',
-            whiteSpace: 'pre-wrap',
-          }}>
-            {msg.action && (
-              <Package size={12} style={{ marginRight: '5px', verticalAlign: 'middle', color: 'var(--color-brushed-gold)' }} />
-            )}
-            {msg.text}
+
+        {mode === 'voice' && !isCalling && voiceTranscript.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--color-taupe)' }}>
+            <Mic size={30} color="var(--border-color)" style={{ margin: '0 auto 0.75rem', display: 'block' }} />
+            <p style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
+              Click <strong>Talk</strong> above to start a voice conversation.
+            </p>
           </div>
+        )}
+
+        {/* Conversation bubbles */}
+        {displayMessages.map((msg, idx) => (
+          msg.text ? (
+            <div key={idx} style={{
+              alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+              maxWidth: '92%',
+              backgroundColor: msg.role === 'user' ? 'var(--color-charcoal)' : '#fff',
+              color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
+              padding: '0.65rem 0.9rem',
+              borderRadius: msg.role === 'user' ? '14px 14px 0 14px' : '14px 14px 14px 0',
+              fontSize: '0.82rem', lineHeight: 1.55,
+              border: msg.role === 'user' ? 'none' : '1px solid var(--border-color)',
+              whiteSpace: 'pre-wrap',
+            }}>
+              {msg.action === 'furniture' && (
+                <Package size={12} style={{ marginRight: '5px', verticalAlign: 'middle', color: 'var(--color-brushed-gold)' }} />
+              )}
+              {msg.text}
+            </div>
+          ) : null
         ))}
-        {isTyping && mode === 'text' && (
-          <div style={{ alignSelf: 'flex-start', padding: '0.6rem 0.85rem', backgroundColor: '#fff', border: '1px solid var(--border-color)', borderRadius: '14px 14px 14px 0', display: 'flex', gap: '4px', alignItems: 'center' }}>
-            {[0,1,2].map(i => (
-              <span key={i} style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: 'var(--color-taupe)', display: 'inline-block', animation: `bounce 1.2s ${i * 0.2}s infinite` }} />
-            ))}
+
+        {/* Live transcript indicator */}
+        {mode === 'voice' && isCalling && voiceTranscript.length > 0 && (
+          <div style={{
+            alignSelf: 'center', fontSize: '0.65rem', color: 'var(--color-taupe)',
+            display: 'flex', alignItems: 'center', gap: '4px',
+            padding: '0.2rem 0.6rem',
+            backgroundColor: 'rgba(74,56,40,0.05)', borderRadius: '20px',
+          }}>
+            <span style={{
+              width: '6px', height: '6px', borderRadius: '50%',
+              backgroundColor: '#f97316', display: 'inline-block',
+              animation: 'blink 1s infinite',
+            }} />
+            Live transcript
           </div>
         )}
+
+
         <div ref={endRef} />
       </div>
 
+      {/* Quick Chips — only shown in text mode */}
       {mode === 'text' && (
-        <>
-          {/* Quick chips */}
-          <div style={{ padding: '0.4rem 0.85rem 0', display: 'flex', gap: '0.35rem', flexWrap: 'wrap', flexShrink: 0 }}>
+        <div style={{ padding: '0.5rem 0.85rem 0', flexShrink: 0, borderTop: '1px solid var(--border-color)' }}>
+          <div style={{
+            fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em',
+            color: 'var(--color-greige)', marginBottom: '0.4rem', paddingTop: '0.2rem',
+          }}>Quick Questions</div>
+          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', paddingBottom: '0.4rem' }}>
             {QUICK_CHIPS.map((s, i) => (
               <button key={i} onClick={() => send(s)} style={{
                 padding: '0.25rem 0.55rem', fontSize: '0.68rem', borderRadius: '10px',
                 border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-color)',
-                cursor: 'pointer', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)', transition: 'all 0.15s'
+                cursor: 'pointer', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)',
+                transition: 'all 0.15s',
               }} className="chip-btn">
                 {s}
               </button>
             ))}
           </div>
-
-          {/* Input */}
-          <div style={{ padding: '0.65rem 0.85rem', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
-            <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.4rem' }}>
-              <input
-                type="text"
-                placeholder='"Add a sofa" or "Change to warm ivory"'
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                style={{
-                  flex: 1, padding: '0.65rem 0.9rem', borderRadius: '20px', border: '1px solid var(--border-color)',
-                  fontFamily: 'var(--font-body)', fontSize: '0.82rem', outline: 'none', backgroundColor: 'var(--bg-color)',
-                }}
-              />
-              <button type="submit" disabled={isTyping} style={{
-                width: '36px', height: '36px', borderRadius: '50%', border: 'none',
-                backgroundColor: isTyping ? 'var(--color-taupe)' : 'var(--color-espresso-brown)',
-                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isTyping ? 'not-allowed' : 'pointer', flexShrink: 0,
-              }}>
-                <Send size={14} />
-              </button>
-            </form>
-          </div>
-        </>
+        </div>
       )}
 
+      {/* Input (text) / End Call (voice) */}
+      <div style={{ padding: '0.65rem 0.85rem', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
+        {mode === 'text' ? (
+          <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.4rem' }}>
+            <input
+              type="text"
+              placeholder="Type your message…"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              style={{
+                flex: 1, padding: '0.65rem 0.9rem', borderRadius: '20px',
+                border: '1px solid var(--border-color)',
+                fontFamily: 'var(--font-body)', fontSize: '0.82rem',
+                outline: 'none', backgroundColor: 'var(--bg-color)',
+              }}
+            />
+            <button type="submit" style={{
+              width: '36px', height: '36px', borderRadius: '50%', border: 'none',
+              backgroundColor: 'var(--color-espresso-brown)',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', flexShrink: 0,
+            }}>
+              <Send size={14} />
+            </button>
+          </form>
+        ) : (
+          <button onClick={stopVoice} style={{
+            width: '100%', padding: '0.65rem', borderRadius: '20px',
+            backgroundColor: '#ef4444', color: '#fff', border: 'none',
+            fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+          }}>
+            <PhoneOff size={14} /> End Voice Call
+          </button>
+        )}
+      </div>
+
       <style>{`
-        @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(232, 223, 208, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(232, 223, 208, 0); } 100% { box-shadow: 0 0 0 0 rgba(232, 223, 208, 0); } }
+        @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(74,56,40,0.35)} 70%{box-shadow:0 0 0 14px rgba(74,56,40,0)} 100%{box-shadow:0 0 0 0 rgba(74,56,40,0)} }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
         .chip-btn:hover { background-color: var(--color-champagne-beige) !important; border-color: var(--color-taupe) !important; }
       `}</style>
     </div>

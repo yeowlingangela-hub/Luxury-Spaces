@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { ChevronLeft, Save, Play, Palette, MessageSquare, Image as ImageIcon, Camera } from 'lucide-react';
 import VisualizerCanvas from '../components/VisualizerCanvas';
@@ -286,8 +286,10 @@ export default function WorkspacePage() {
         }}>
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
-            {[{ key: 'Color', label: 'Walls', icon: <Palette size={13} /> },
-              { key: 'Chat',  label: 'AI Chat', icon: <MessageSquare size={13} /> }].map(tab => (
+            {[
+              { key: 'Color', label: 'Walls',   icon: <Palette size={13} /> },
+              { key: 'Chat',  label: 'AI Chat', icon: <MessageSquare size={13} /> },
+            ].map(tab => (
               <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
                 flex: 1, padding: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
                 borderBottom: activeTab === tab.key ? '2px solid var(--color-espresso-brown)' : '2px solid transparent',
